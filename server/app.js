@@ -9,16 +9,28 @@ const expressHandlebars = require('express-handlebars');
 const helmet = require('helmet');
 const session = require('express-session');
 const router = require('./router.js');
+const RedisStore = require('connect-redis')(session);
+const redis = require('redis');
+const csrf = require('csurf');
 
 const port = process.env.PORT || process.env.NODE_PORT || 3000;
 const dbURI = process.env.MONGODB_URI || 'mongodb://127.0.0.1/DomoMaker';
 
 mongoose.connect(dbURI, (err) => {
-  if (err) {
-    console.log('could not connect to database');
-    throw err;
-  }
+    if (err) {
+        console.log('could not connect to database');
+        throw err;
+    }
 });
+
+const redisURL = process.env.REDISCLOUD_URL ||
+    'redis://default:1if1LWc5GkPasgiBdYQqhE6FTXjbDSf7@redis-19649.c82.us-east-1-2.ec2.cloud.redislabs.com:19649';
+
+let redisClient = redis.createClient({
+    legacyMode: true,
+    url: redisURL,
+})
+redisClient.connect().catch(console.error);
 
 const app = express();
 app.use(helmet());
@@ -29,11 +41,16 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 app.use(session({
-  key: 'sessionid',
-  secret: 'Domo Arigato',
-  resave: true,
-  saveUninitialized: true,
-
+    key: 'sessionid',
+    store: new RedisStore({
+        client: redisClient,
+    }),
+    secret: 'Domo Arigato',
+    resave: true,
+    saveUninitialized: true,
+    cookie: {
+        httpOnly: true,
+    },
 }));
 
 app.engine('handlebars', expressHandlebars.engine({ defaultLayout: '' }));
@@ -41,9 +58,18 @@ app.set('view engine', 'handlebars');
 app.set('views', `${__dirname}/../views`);
 app.use(cookieParser());
 
+app.use(csrf());
+app.use((err, req, res, next) => {
+    if (err.code !== 'EBADCSRFTOKEN') {
+        return next(err);
+    }
+    console.log('Missin CSRF token!');
+    return false;
+});
+
 router(app);
 
 app.listen(port, (err) => {
-  if (err) { throw err; }
-  console.log(`Listening on port ${port}`);
+    if (err) { throw err; }
+    console.log(`Listening on port ${port}`);
 });
